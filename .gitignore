@@ -1,0 +1,20 @@
+# Build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Local executables
+pacman
+a.out
+*.exe
+*.out
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
