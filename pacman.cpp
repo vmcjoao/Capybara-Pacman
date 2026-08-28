@@ -3,6 +3,7 @@
 #include <SFML/Window.hpp>
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
+#include <algorithm>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -20,6 +21,12 @@ using namespace std;
 const int SIZE = 50; // Define o tamanho, em pixels, de cada célula do grid do mapa
 const int LAR = 25;  // Largura do mapa, medida em número de células (SIZE)
 const int ALT = 13;  // Altura do mapa, também em número de células
+const int MAP_WIDTH = LAR * SIZE;
+const int MAP_HEIGHT = ALT * SIZE;
+const int UI_PANEL_WIDTH = 50;
+const int UI_BAR_HEIGHT = 50;
+const int WINDOW_WIDTH = MAP_WIDTH + UI_PANEL_WIDTH;
+const int WINDOW_HEIGHT = MAP_HEIGHT + UI_BAR_HEIGHT;
 enum DIRECOES {      // Enum para representar as direções
     CIM,
     DIR,
@@ -285,6 +292,21 @@ private:
     optional<sf::Sound> sound;
 };
 
+class GameResources {
+public:
+    map<string, sf::Texture> floorTextures;
+    map<string, sf::Texture> uiTextures;
+    map<string, sf::SoundBuffer> soundBuffers;
+    map<string, SoundHandle> sounds;
+
+    void buildSounds() {
+        for (auto& soundBuffer : soundBuffers) {
+            sounds[soundBuffer.first].setBuffer(soundBuffer.second);
+            sounds[soundBuffer.first].setVolume(100.f);
+        }
+    }
+};
+
 // Altera o volume de tudo
 void setVolumeGeral(float volume, sf::Music& musicaMenu, map<string, SoundHandle>& Audios) {
     musicaMenu.setVolume(volume);
@@ -293,6 +315,73 @@ void setVolumeGeral(float volume, sf::Music& musicaMenu, map<string, SoundHandle
     }
     Audios["button-hover"].setVolume(volume / 2);
     Audios["bg-iniciando"].setVolume(volume / 2);
+}
+
+template <typename DrawableWithBounds>
+void centralizarOrigem(DrawableWithBounds& drawable) {
+    sf::FloatRect bounds = drawable.getLocalBounds();
+    drawable.setOrigin(sf::Vector2f(
+        bounds.position.x + bounds.size.x / 2.0f,
+        bounds.position.y + bounds.size.y / 2.0f
+    ));
+}
+
+sf::Text criarTextoCentralizado(const sf::Font& fonte, const string& texto, unsigned int tamanho, sf::Vector2f posicao) {
+    sf::Text text(fonte, texto, tamanho);
+    text.setFillColor(sf::Color::White);
+    text.setOutlineColor(sf::Color::Black);
+    text.setOutlineThickness(2);
+    centralizarOrigem(text);
+    text.setPosition(posicao);
+    return text;
+}
+
+void posicionarPonteiro(sf::CircleShape& pointer, const sf::Text& texto) {
+    float pointerX = texto.getGlobalBounds().position.x - pointer.getRadius() - 15;
+    float pointerY = texto.getPosition().y - 12;
+    pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+}
+
+void aplicarViewProporcional(sf::RenderWindow& window, sf::View& view) {
+    const sf::Vector2u windowSize = window.getSize();
+    const float windowRatio = static_cast<float>(windowSize.x) / static_cast<float>(windowSize.y);
+    const float gameRatio = static_cast<float>(WINDOW_WIDTH) / static_cast<float>(WINDOW_HEIGHT);
+
+    float viewportWidth = 1.f;
+    float viewportHeight = 1.f;
+    float viewportLeft = 0.f;
+    float viewportTop = 0.f;
+
+    if (windowRatio > gameRatio) {
+        viewportWidth = gameRatio / windowRatio;
+        viewportLeft = (1.f - viewportWidth) / 2.f;
+    }
+    else {
+        viewportHeight = windowRatio / gameRatio;
+        viewportTop = (1.f - viewportHeight) / 2.f;
+    }
+
+    view.setViewport(sf::FloatRect(
+        sf::Vector2f(viewportLeft, viewportTop),
+        sf::Vector2f(viewportWidth, viewportHeight)
+    ));
+    window.setView(view);
+}
+
+sf::Vector2u calcularTamanhoInicialJanela() {
+    const sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
+    const float maxWidth = static_cast<float>(desktop.size.x) * 0.9f;
+    const float maxHeight = static_cast<float>(desktop.size.y) * 0.9f;
+    const float scale = std::min({
+        1.f,
+        maxWidth / static_cast<float>(WINDOW_WIDTH),
+        maxHeight / static_cast<float>(WINDOW_HEIGHT)
+    });
+
+    return sf::Vector2u(
+        static_cast<unsigned int>(WINDOW_WIDTH * scale),
+        static_cast<unsigned int>(WINDOW_HEIGHT * scale)
+    );
 }
 
 // --- Funções de Lógica do Jogo ---
@@ -502,10 +591,16 @@ int main() {
     GameState currentState = MENU;
     GameState prevState;
     float volumeGeral = 100;
+    GameResources resources;
 
     // --- Configuração da Janela ---
-    sf::RenderWindow jogo(sf::VideoMode(sf::Vector2u(LAR * SIZE + 50, ALT * SIZE + 50)), "Pac-Man");
+    sf::RenderWindow jogo(sf::VideoMode(calcularTamanhoInicialJanela()), "Pac-Man");
     jogo.setFramerateLimit(60);
+    sf::View gameView(
+        sf::Vector2f(WINDOW_WIDTH / 2.f, WINDOW_HEIGHT / 2.f),
+        sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT)
+    );
+    aplicarViewProporcional(jogo, gameView);
 
     // --- Criação do Jogador ---
     Player jogador;
@@ -575,9 +670,9 @@ int main() {
     sf::Clock transitionClock; // Relógio para controlar a transição de estados
 
     // Define a textura inicial e a posição visual dos personagens
-    jogador.Sprite.setTexture(Texturas[DIR][0]);
+    jogador.Sprite.setTexture(Texturas[DIR][0], true);
     for (Ghost& croc : ListaFantasmas) {
-        croc.sprite.setTexture(croc.animNormal[croc.dir][0]);
+        croc.sprite.setTexture(croc.animNormal[croc.dir][0], true);
         croc.visualPos = sf::Vector2f(croc.x * SIZE, croc.y * SIZE);
     }
 
@@ -593,17 +688,14 @@ int main() {
     sf::Sprite spriteParede(texturaParede);
 
     // Carrega todos os arquivos de áudio em buffers e depois os associa a objetos Sound
-    map<string, sf::SoundBuffer> Buffers;
-    map<string, SoundHandle> Audios;
+    map<string, sf::SoundBuffer>& Buffers = resources.soundBuffers;
+    map<string, SoundHandle>& Audios = resources.sounds;
     vector<string> nomesAudios = {
         "point", "kill", "win", "powerup", "swim", "swim-beg", "game-over",
         "life-lost", "button-hover", "button-click", "bg-iniciando"};
     for (auto& nome : nomesAudios)
         carregarAudios(Buffers, nome, ".wav");
-    for (auto& som : Buffers) {
-        Audios[som.first].setBuffer(som.second);
-        Audios[som.first].setVolume(100.f);
-    }   
+    resources.buildSounds();
     Audios["button-hover"].setVolume(50.0f);
     Audios["bg-iniciando"].setVolume(50.0f);
 
@@ -620,7 +712,7 @@ int main() {
     menuMusic.setLooping(true); // Faz a música repetir
 
     // Carrega as texturas do chão (caminho e rio) para o autotiling
-    map<string, sf::Texture> texturasChao;
+    map<string, sf::Texture>& texturasChao = resources.floorTextures;
     sf::Sprite spriteChao(placeholderTexture);
     vector<string> nomesTexturas = {
         "caminho0", "caminho2-canto-dir-bai", "caminho2-canto-dir-cim",
@@ -633,7 +725,7 @@ int main() {
         carregarTexturaChao(texturasChao, nome);
 
     // Carrega assets (folhas, corações, etc.) 
-    map<string, sf::Texture> Assets;
+    map<string, sf::Texture>& Assets = resources.uiTextures;
     sf::Sprite spriteAsset(placeholderTexture);
     vector<string> nomesAssets = {
         "folha", "full-heart", "empty-heart", "blue-heart", "fundo-botao-p",
@@ -675,50 +767,26 @@ int main() {
 
     sf::Vector2u tamanhoTextura = menuBackgroundTex.getSize();
     menuBackground.setScale(sf::Vector2f(
-        (float)(LAR * SIZE + 50) / tamanhoTextura.x,
-        (float)(ALT * SIZE + 50) / tamanhoTextura.y
+        (float)WINDOW_WIDTH / tamanhoTextura.x,
+        (float)WINDOW_HEIGHT / tamanhoTextura.y
     ));
 
     // ===========================================
     // ============= ELEMENTOS MENU ==============
     // ===========================================
     // Título do Jogo
-    sf::Text titulo(fonteMenu, "CAPIVARA MAN", 80);
-    titulo.setFillColor(sf::Color::White);
-    titulo.setOutlineColor(sf::Color::Black);
+    sf::Text titulo = criarTextoCentralizado(fonteMenu, "CAPIVARA MAN", 80, sf::Vector2f(WINDOW_WIDTH / 2.0f, 150));
     titulo.setOutlineThickness(4);
     titulo.setStyle(sf::Text::Bold);
 
-    sf::FloatRect textRect = titulo.getLocalBounds();
-    titulo.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    titulo.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 150));
-
     // Botão "Iniciar Jogo"
-    sf::Text botaoIniciar(fonteMenu, "Iniciar Jogo", 50);
-    botaoIniciar.setFillColor(sf::Color::White);
-    botaoIniciar.setOutlineColor(sf::Color::Black);
-    botaoIniciar.setOutlineThickness(2);
-    textRect = botaoIniciar.getLocalBounds();
-    botaoIniciar.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    botaoIniciar.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 400));
+    sf::Text botaoIniciar = criarTextoCentralizado(fonteMenu, "Iniciar Jogo", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 400));
 
     // Botão "Sair"
-    sf::Text botaoSair(fonteMenu, "Sair", 50);
-    botaoSair.setFillColor(sf::Color::White);
-    botaoSair.setOutlineColor(sf::Color::Black);
-    botaoSair.setOutlineThickness(2);
-    textRect = botaoSair.getLocalBounds();
-    botaoSair.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    botaoSair.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 600));
+    sf::Text botaoSair = criarTextoCentralizado(fonteMenu, "Sair", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 600));
 
     // Botão "Configurações"
-    sf::Text botaoConfig(fonteMenu, "Configuracoes", 50);
-    botaoConfig.setFillColor(sf::Color::White);
-    botaoConfig.setOutlineColor(sf::Color::Black);
-    botaoConfig.setOutlineThickness(2);
-    textRect = botaoConfig.getLocalBounds();
-    botaoConfig.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    botaoConfig.setPosition(sf::Vector2f((LAR* SIZE + 50) / 2.0f, 500));
+    sf::Text botaoConfig = criarTextoCentralizado(fonteMenu, "Configuracoes", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 500));
 
     sf::CircleShape pointer(12, 3); // Raio 12, 3 lados = triângulo para o ponteiro do menu
     pointer.setOutlineColor(sf::Color::Black);
@@ -732,17 +800,12 @@ int main() {
     // ===========================================
     
     // Filtro escuro para sobrepor à tela de jogo
-    sf::RectangleShape fundoEsc(sf::Vector2f(LAR* SIZE + 50, ALT* SIZE + 50));
+    sf::RectangleShape fundoEsc(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
     fundoEsc.setFillColor(sf::Color(0, 0, 0, 150));
 
     // Texto "PAUSADO"
-    sf::Text textoPause(fonteMenu, "PAUSADO", 90);
-    textoPause.setFillColor(sf::Color::White);
-    textoPause.setOutlineColor(sf::Color::Black);
+    sf::Text textoPause = criarTextoCentralizado(fonteMenu, "PAUSADO", 90, sf::Vector2f(WINDOW_WIDTH / 2.0f, WINDOW_HEIGHT / 2.0f));
     textoPause.setOutlineThickness(4);
-    textRect = textoPause.getLocalBounds(); // Reutilizando a variável textRect
-    textoPause.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    textoPause.setPosition(sf::Vector2f((LAR* SIZE + 50) / 2.0f, (ALT* SIZE + 50) / 2.0f));
 
     // ===========================================
     // ========= ELEMENTOS FIM DE JOGO ===========
@@ -751,46 +814,25 @@ int main() {
     // Usa o mesmo fundo escurecido do pause
 
     // Título "FIM DE JOGO"
-    sf::Text textoFimDeJogo(fonteMenu, "FIM DE JOGO", 100);
+    sf::Text textoFimDeJogo = criarTextoCentralizado(fonteMenu, "FIM DE JOGO", 100, sf::Vector2f(WINDOW_WIDTH / 2.0f, 200));
     textoFimDeJogo.setFillColor(sf::Color::Red);
-    textoFimDeJogo.setOutlineColor(sf::Color::Black);
     textoFimDeJogo.setOutlineThickness(5);
-    textRect = textoFimDeJogo.getLocalBounds();
-    textoFimDeJogo.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    textoFimDeJogo.setPosition(sf::Vector2f((LAR* SIZE + 50) / 2.0f, 200));
 
     // Botão "Jogar Novamente"
-    sf::Text botaoJogarNovamente(fonteMenu, "Jogar Novamente", 50);
-    botaoJogarNovamente.setFillColor(sf::Color::White);
-    botaoJogarNovamente.setOutlineColor(sf::Color::Black);
-    botaoJogarNovamente.setOutlineThickness(2);
-    textRect = botaoJogarNovamente.getLocalBounds();
-    botaoJogarNovamente.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    botaoJogarNovamente.setPosition(sf::Vector2f((LAR* SIZE + 50) / 2.0f, 400));
+    sf::Text botaoJogarNovamente = criarTextoCentralizado(fonteMenu, "Jogar Novamente", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 400));
 
     // Botão "Voltar ao Menu"
-    sf::Text botaoVoltarMenu(fonteMenu, "Voltar ao Menu", 50);
-    botaoVoltarMenu.setFillColor(sf::Color::White);
-    botaoVoltarMenu.setOutlineColor(sf::Color::Black);
-    botaoVoltarMenu.setOutlineThickness(2);
-    textRect = botaoVoltarMenu.getLocalBounds();
-    botaoVoltarMenu.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    botaoVoltarMenu.setPosition(sf::Vector2f((LAR* SIZE + 50) / 2.0f, 500));
+    sf::Text botaoVoltarMenu = criarTextoCentralizado(fonteMenu, "Voltar ao Menu", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 500));
 
     // ===========================================
     // ========= ELEMENTOS DIFICULDADES ==========
     // ===========================================
 
-    sf::Text tituloDificuldade(fonteMenu, "ESCOLHA A DIFICULDADE", 60);
-    tituloDificuldade.setFillColor(sf::Color::White);
-    tituloDificuldade.setOutlineColor(sf::Color::Black);
+    sf::Text tituloDificuldade = criarTextoCentralizado(fonteMenu, "ESCOLHA A DIFICULDADE", 60, sf::Vector2f(WINDOW_WIDTH / 2.0f, 250));
     tituloDificuldade.setOutlineThickness(3);
-    textRect = tituloDificuldade.getLocalBounds();
-    tituloDificuldade.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    tituloDificuldade.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 250));
 
     std::vector<sf::CircleShape> bolinhasDificuldade(5); // vetor para guardar as 5 bolinhas
-    float startX = ((LAR * SIZE + 50) / 2.0f) - 120; // Posição X inicial para a primeira bolinha
+    float startX = (WINDOW_WIDTH / 2.0f) - 120; // Posição X inicial para a primeira bolinha
     float posY = 400; // Posição Y de todas as bolinhas
     float spacing = 60; // Espaçamento entre as bolinhas
     int hoveredLevel = 0;
@@ -815,51 +857,30 @@ int main() {
     };
 
     // Elementos vitoria
-    sf::Text textoVitoria(fonteMenu, "VITORIA!", 120);
+    sf::Text textoVitoria = criarTextoCentralizado(fonteMenu, "VITORIA!", 120, sf::Vector2f(WINDOW_WIDTH / 2.0f, 200));
     textoVitoria.setFillColor(sf::Color::Yellow);
-    textoVitoria.setOutlineColor(sf::Color::Black);
     textoVitoria.setOutlineThickness(5);
-    textRect = textoVitoria.getLocalBounds();
-    textoVitoria.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    textoVitoria.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 200));
 
     // ===========================================
     // ========= ELEMENTOS CONFIGURACOES ==========
     // ===========================================
 
     // Texto principal
-    sf::Text tituloConfig(fonteMenu, "CONFIGURACOES", 80);
-    tituloConfig.setFillColor(sf::Color::White);
-    tituloConfig.setOutlineColor(sf::Color::Black);
+    sf::Text tituloConfig = criarTextoCentralizado(fonteMenu, "CONFIGURACOES", 80, sf::Vector2f(WINDOW_WIDTH / 2.0f, 180));
     tituloConfig.setOutlineThickness(5);
-    textRect = tituloConfig.getLocalBounds();
-    tituloConfig.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    tituloConfig.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 180));
 
     // Texto volume
-    sf::Text labelVolume(fonteMenu, "Volume:", 50);
-    labelVolume.setFillColor(sf::Color::White);
-    labelVolume.setOutlineColor(sf::Color::Black);
-    labelVolume.setOutlineThickness(2);
-    textRect = labelVolume.getLocalBounds();
-    labelVolume.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    labelVolume.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 380));
+    sf::Text labelVolume = criarTextoCentralizado(fonteMenu, "Volume:", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 380));
 
     // Botão voltar
-    sf::Text botaoVoltar(fonteMenu, "Voltar", 50);
-    botaoVoltar.setFillColor(sf::Color::White);
-    botaoVoltar.setOutlineColor(sf::Color::Black);
-    botaoVoltar.setOutlineThickness(2);
-    textRect = botaoVoltar.getLocalBounds();
-    botaoVoltar.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
-    botaoVoltar.setPosition(sf::Vector2f((LAR * SIZE + 50) / 2.0f, 600));
+    sf::Text botaoVoltar = criarTextoCentralizado(fonteMenu, "Voltar", 50, sf::Vector2f(WINDOW_WIDTH / 2.0f, 600));
 
     // Controle deslizante
     sf::RectangleShape volumeTrack(sf::Vector2f(400, 10)); // 300px de largura, 10px de altura
     volumeTrack.setFillColor(sf::Color(80, 80, 80));
     volumeTrack.setOutlineColor(sf::Color::Black);
     volumeTrack.setOutlineThickness(2);
-    textRect = volumeTrack.getLocalBounds();
+    sf::FloatRect textRect = volumeTrack.getLocalBounds();
     volumeTrack.setOrigin(sf::Vector2f(textRect.position.x + textRect.size.x / 2.0f, textRect.position.y + textRect.size.y / 2.0f));
     volumeTrack.setPosition(sf::Vector2f(labelVolume.getPosition().x, labelVolume.getPosition().y + 50));
 
@@ -893,9 +914,12 @@ int main() {
             const auto* keyPressed = event->getIf<sf::Event::KeyPressed>();
             const auto* mouseButtonPressed = event->getIf<sf::Event::MouseButtonPressed>();
             const auto* mouseButtonReleased = event->getIf<sf::Event::MouseButtonReleased>();
+            const auto* resized = event->getIf<sf::Event::Resized>();
             // Evento para fechar a janela (no 'X')
             if (event->is<sf::Event::Closed>())
                 jogo.close();
+            if (resized)
+                aplicarViewProporcional(jogo, gameView);
 
             if (keyPressed) {
                 if (keyPressed->code == sf::Keyboard::Key::P) {
@@ -1008,9 +1032,7 @@ int main() {
                             botaoIniciar.setFillColor(sf::Color(0xf2b24bFF)); // Cor de destaque
                             pointer.setFillColor(sf::Color(0xf2b24bFF));
                             // Posiciona o ponteiro à esquerda do botão
-                            float pointerX = botaoIniciar.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                            float pointerY = botaoIniciar.getPosition().y - 12;
-                            pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoIniciar);
                         }
                         else {
                             mousep = 2;
@@ -1018,9 +1040,7 @@ int main() {
 
                             botaoSair.setFillColor(sf::Color(0xf2b24bFF));
                             pointer.setFillColor(sf::Color(0xf2b24bFF));
-                            float pointerX = botaoSair.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                            float pointerY = botaoSair.getPosition().y - 12;
-                            pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoSair);
                         }
                     }
                 }
@@ -1121,9 +1141,7 @@ int main() {
                             botaoJogarNovamente.setFillColor(sf::Color(0xf2b24bFF)); // Cor de destaque
                             pointer.setFillColor(sf::Color(0xf2b24bFF));
                             // Posiciona o ponteiro à esquerda do botão
-                            float pointerX = botaoJogarNovamente.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                            float pointerY = botaoJogarNovamente.getPosition().y - 12;
-                            pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoJogarNovamente);
                         }
                         else {
                             mousep = 2;
@@ -1131,9 +1149,7 @@ int main() {
 
                             botaoVoltarMenu.setFillColor(sf::Color(0xf2b24bFF));
                             pointer.setFillColor(sf::Color(0xf2b24bFF));
-                            float pointerX = botaoVoltarMenu.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                            float pointerY = botaoVoltarMenu.getPosition().y - 12;
-                            pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoVoltarMenu);
                         }
                     }
                 }
@@ -1186,9 +1202,7 @@ int main() {
                 botaoIniciar.setFillColor(sf::Color(0xf2b24bFF)); // Cor de destaque
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
                 // Posiciona o ponteiro à esquerda do botão
-                float pointerX = botaoIniciar.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoIniciar.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoIniciar);
                 showpointer = true;
             }
             else if (mousep != 1) {
@@ -1203,9 +1217,7 @@ int main() {
                 }
                 botaoSair.setFillColor(sf::Color(0xf2b24bFF));
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
-                float pointerX = botaoSair.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoSair.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoSair);
                 showpointer = true;
             }
             else if (mousep != 2) {
@@ -1219,9 +1231,7 @@ int main() {
                 }
                 botaoConfig.setFillColor(sf::Color(0xf2b24bFF));
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
-                float pointerX = botaoConfig.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoConfig.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoConfig);
                 showpointer = true;
             }
             else if (mousep != 3) {
@@ -1515,9 +1525,7 @@ int main() {
                 }
                 botaoConfig.setFillColor(sf::Color(0xf2b24bFF));
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
-                float pointerX = botaoConfig.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoConfig.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoConfig);
                 showpointer = true;
             }
             else {
@@ -1571,9 +1579,7 @@ int main() {
                 botaoVoltar.setFillColor(sf::Color(0xf2b24bFF)); // Cor de destaque
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
                 // Posiciona o ponteiro à esquerda do botão
-                float pointerX = botaoVoltar.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoVoltar.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoVoltar);
                 showpointer = true;
             }
             else {
@@ -1632,9 +1638,7 @@ int main() {
                 botaoJogarNovamente.setFillColor(sf::Color(0xf2b24bFF)); // Cor de destaque
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
                 // Posiciona o ponteiro à esquerda do botão
-                float pointerX = botaoJogarNovamente.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoJogarNovamente.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoJogarNovamente);
                 showpointer = true;
             }
             else if (mousep != 1) {
@@ -1649,9 +1653,7 @@ int main() {
                 }
                 botaoVoltarMenu.setFillColor(sf::Color(0xf2b24bFF));
                 pointer.setFillColor(sf::Color(0xf2b24bFF));
-                float pointerX = botaoVoltarMenu.getGlobalBounds().position.x - pointer.getRadius() - 15;
-                float pointerY = botaoVoltarMenu.getPosition().y - 12;
-                pointer.setPosition(sf::Vector2f(pointerX, pointerY));
+                posicionarPonteiro(pointer, botaoVoltarMenu);
                 showpointer = true;
             }
             else if (mousep != 2) {
@@ -1763,7 +1765,7 @@ int main() {
         }
         case INICIANDO: {
             jogo.clear(sf::Color(0x000000FF)); // Fundo preto
-            loadingSprite.setTexture(Loading[currentLoadingFrame]);
+            loadingSprite.setTexture(Loading[currentLoadingFrame], true);
             loadingSprite.setPosition(sf::Vector2f(0, 0));
             jogo.draw(loadingSprite);
             break;
@@ -1809,19 +1811,19 @@ int main() {
                         else if (n == 4) chave = tipo + "4";
 
                         if (texturasChao.count(chave)) {
-                            spriteChao.setTexture(texturasChao[chave]);
+                            spriteChao.setTexture(texturasChao[chave], true);
                             spriteChao.setPosition(sf::Vector2f(j * SIZE, i * SIZE));
                             jogo.draw(spriteChao);
                         }
                         // Desenha a folha, se ainda existir na célula
                         if (mapaFolhas[i][j] && mapa[i][j] != '4') {
-                            spriteAsset.setTexture(Assets["folha"]);
+                            spriteAsset.setTexture(Assets["folha"], true);
                             spriteAsset.setPosition(sf::Vector2f(j * SIZE, i * SIZE));
                             jogo.draw(spriteAsset);
                         }
                         // Desenha a melancia
                         if (mapaFolhas[i][j] && mapa[i][j] == '4') {
-                            spriteAsset.setTexture(Assets["melancia"]);
+                            spriteAsset.setTexture(Assets["melancia"], true);
                             spriteAsset.setPosition(sf::Vector2f(j * SIZE, i * SIZE));
                             jogo.draw(spriteAsset);
                         }
@@ -1833,9 +1835,9 @@ int main() {
             if (currentState != GAME_OVER) {
                 // Atualiza a textura do jogador (terra ou água)
                 if (pacNaAgua)
-                    jogador.Sprite.setTexture(Texturasswim[jogador.ultimadir][jogador.animationFrame]);
+                    jogador.Sprite.setTexture(Texturasswim[jogador.ultimadir][jogador.animationFrame], true);
                 else
-                    jogador.Sprite.setTexture(Texturas[jogador.ultimadir][jogador.animationFrame]);
+                    jogador.Sprite.setTexture(Texturas[jogador.ultimadir][jogador.animationFrame], true);
 
                 jogador.Sprite.setPosition(jogador.visualPos);
                 jogo.draw(jogador.Sprite);
@@ -1848,9 +1850,9 @@ int main() {
 
                 bool crocNaAgua = mapa[(int)(croc.visualPos.y + SIZE / 2) / SIZE][(int)(croc.visualPos.x + SIZE / 2) / SIZE] == '2';
                 if (crocNaAgua)
-                    croc.sprite.setTexture(croc.animSwim[croc.dir][croc.animFrame]);
+                    croc.sprite.setTexture(croc.animSwim[croc.dir][croc.animFrame], true);
                 else
-                    croc.sprite.setTexture(croc.animNormal[croc.dir][croc.animFrame]);
+                    croc.sprite.setTexture(croc.animNormal[croc.dir][croc.animFrame], true);
 
                 croc.sprite.setPosition(croc.visualPos);
                 jogo.draw(croc.sprite);
@@ -1859,45 +1861,45 @@ int main() {
             // Se for GAME_OVER, desenha a animação de morte por cima
             if (currentState == GAME_OVER) {
                 sf::Sprite spriteAnimacao(placeholderTexture);
-                spriteAnimacao.setTexture(GameOver[dirAnimGameOver][frameAnimGameOver]);
+                spriteAnimacao.setTexture(GameOver[dirAnimGameOver][frameAnimGameOver], true);
                 spriteAnimacao.setPosition(posAnimGameOver);
                 jogo.draw(spriteAnimacao);
             }
 
             // 4. Desenha a Interface do Usuário
-            sf::RectangleShape barralat(sf::Vector2f(50, 700));
-            sf::RectangleShape barrainf(sf::Vector2f(1300, 50));
-            barralat.setPosition(sf::Vector2f(1250, 0));
-            barrainf.setPosition(sf::Vector2f(0, 650));
+            sf::RectangleShape barralat(sf::Vector2f(UI_PANEL_WIDTH, WINDOW_HEIGHT));
+            sf::RectangleShape barrainf(sf::Vector2f(WINDOW_WIDTH, UI_BAR_HEIGHT));
+            barralat.setPosition(sf::Vector2f(MAP_WIDTH, 0));
+            barrainf.setPosition(sf::Vector2f(0, MAP_HEIGHT));
             barralat.setFillColor(sf::Color(0, 180, 255));
             barrainf.setFillColor(sf::Color(0, 180, 255));
             jogo.draw(barralat);
             jogo.draw(barrainf);
 
-            scoreText.setPosition(sf::Vector2f(860, 660));
+            scoreText.setPosition(sf::Vector2f(MAP_WIDTH - 390, MAP_HEIGHT + 10));
             jogo.draw(scoreText);
 
             sf::Sprite life(placeholderTexture);
-            sf::Vector2f lifepos(1255, 30);
+            sf::Vector2f lifepos(MAP_WIDTH + 5, 30);
             for (int i = 0; i < Life.size(); i++) {
                 if (Life[i]) {
-                    life.setTexture(Assets["full-heart"]);
+                    life.setTexture(Assets["full-heart"], true);
                 }
                 else {
-                    life.setTexture(Assets["empty-heart"]);
+                    life.setTexture(Assets["empty-heart"], true);
                 }
                 life.setPosition(lifepos);
                 lifepos.y += 50;
                 jogo.draw(life);
             }
             if (melan[0]) {
-                life.setTexture(Assets["blue-heart"]);
+                life.setTexture(Assets["blue-heart"], true);
                 life.setPosition(lifepos);
                 lifepos.y += 50;
                 jogo.draw(life); 
             }
             if (melan[1]) {
-                life.setTexture(Assets["blue-heart"]);
+                life.setTexture(Assets["blue-heart"], true);
                 life.setPosition(lifepos);
                 jogo.draw(life); 
             }
@@ -1940,7 +1942,7 @@ int main() {
             }
 
             if (currentState == VITORIA) {
-                vitoriaSprite.setTexture(animacaoVitoria[frameVitoria]);
+                vitoriaSprite.setTexture(animacaoVitoria[frameVitoria], true);
                 vitoriaSprite.setPosition(sf::Vector2f(0, 0));
                 jogo.draw(vitoriaSprite);
 
