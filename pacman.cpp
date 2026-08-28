@@ -65,7 +65,7 @@ vector<sf::Texture> Loading;           // Armazena os frames da animação de lo
 vector<sf::Texture> GameOver[4];       // Armazena os frames da animação de morte, um set para cada direção
 vector<sf::Texture> animacaoVitoria;   // Armazena os frames da animação de vitória
 int dificuldadeJogo = 3;               // Guarda a dificuldade dos fantasmas
-vector<bool> melan = { 0, 0 };         // Representa as vidas extras, conseguidas com powerups
+vector<bool> morangos = { 0, 0 };      // Representa as vidas extras, conseguidas com morangos
 
 // ===================================================================
 // STRUCTS
@@ -121,14 +121,16 @@ struct Ghost {
 // ===================================================================
 // DEFINIÇÃO DO MAPA
 // '1': Parede
-// '0'/'3'/'4': Caminho livre
+// '0'/'3'/'4'/'5': Caminho livre
 // '2': Água
+// '4': Melancia
+// '5': Morango
 // ===================================================================
 char mapa[ALT][LAR + 1] = {
     "1111111011111111011111111",
     "1300031303000030313000031",
     "1011101110111101110111101",
-    "1304030003000000003030031",
+    "1304030003000000003530031",
     "1011111110111111110101101",
     "1300030003022200003030031",
     "1011101111122211111101101",
@@ -136,7 +138,7 @@ char mapa[ALT][LAR + 1] = {
     "1011110111111111110111101",
     "1300003300033000303000031",
     "1011111011100111011111101",
-    "1300000312222221300400031",
+    "1305000312222221300400031",
     "1111111011111111011111111" };
 // Mapa auxiliar, apenas para marcar onde ainda existem folhas a serem coletadas
 bool mapaFolhas[ALT][LAR] = { false };
@@ -400,19 +402,19 @@ void Reset(Player& pacman, vector<Ghost>& ListaFantasmas, bool rstpts) {
         // Preenche o mapa de folhas com base no layout original
         for (int i = 0; i < ALT; ++i) {
             for (int j = 0; j < LAR - 1; ++j) {
-                mapaFolhas[i][j] = (mapa[i][j] == '0' || mapa[i][j] == '3' || mapa[i][j] == '4');
+                mapaFolhas[i][j] = (mapa[i][j] == '0' || mapa[i][j] == '3' || mapa[i][j] == '4' || mapa[i][j] == '5');
                 if (mapaFolhas[i][j])
                     numPontos++;
             }
         }
         Life = { 1, 1, 1, 1, 1 }; // Restaura todas as vidas
-        melan = { 0, 0 }; // Reseta powerups
+        morangos = { 0, 0 }; // Reseta vidas extras
         cout << "Vidas restauradas" << endl;
     }
     // Caso contrário, o jogador apenas perdeu uma vida
     else {
-        if (!melan[1]) {
-            if (!melan[0]) {
+        if (!morangos[1]) {
+            if (!morangos[0]) {
                 int vidasrestantes = 4;
                 // Encontra a última vida e a define como perdida
                 for (int i = 4; i >= 0; i--) {
@@ -432,10 +434,10 @@ void Reset(Player& pacman, vector<Ghost>& ListaFantasmas, bool rstpts) {
                 }
             }
             else
-                melan[0] = 0;
+                morangos[0] = 0;
         }
         else
-            melan[1] = 0;
+            morangos[1] = 0;
     }
 
     // Reseta todos os fantasmas
@@ -729,7 +731,7 @@ int main() {
     sf::Sprite spriteAsset(placeholderTexture);
     vector<string> nomesAssets = {
         "folha", "full-heart", "empty-heart", "blue-heart", "fundo-botao-p",
-        "fundo-botao-pressed-p", "fundo-botao-g", "fundo-botao-pressed-g", "melancia"};
+        "fundo-botao-pressed-p", "fundo-botao-g", "fundo-botao-pressed-g", "melancia", "morango"};
     for (auto& nome : nomesAssets)
         carregarAssets(Assets, nome);
     if (!font.openFromFile("fonte.ttf")) {
@@ -1384,17 +1386,24 @@ int main() {
                     mapaFolhas[jogador.posy][jogador.posx] = false;  // Remove o asset do mapa
                     pontuacao += ppf;                                // Adiciona pontos
                     numPontos--;                                     // Tira uma ponto do total
-                    if (mapa[jogador.posy][jogador.posx] != '4')
+                    if (mapa[jogador.posy][jogador.posx] != '4' && mapa[jogador.posy][jogador.posx] != '5')
                         Audios["point"].play();                      // Toca o som de coleta
+                    else if (mapa[jogador.posy][jogador.posx] == '4') {
+                        Audios["powerup"].play();
+                        for (auto& croc : ListaFantasmas) {
+                            croc.dificuldade = 0;
+                        }
+                        cout << "Melancia coletada. Fantasmas enfraquecidos!" << endl;
+                    }
                     else {
                         Audios["powerup"].play();
-                        if (!melan[0]) {
-                            melan[0] = 1;
+                        if (!morangos[0]) {
+                            morangos[0] = 1;
                         }
-                        else if (!melan[1]) {
-                            melan[1] = 1;
+                        else if (!morangos[1]) {
+                            morangos[1] = 1;
                         }
-                        cout << "Powerup coletado. 1 vida extra adicionada!" << endl;
+                        cout << "Morango coletado. 1 vida extra adicionada!" << endl;
                     }
                     cout << "Point buffer tocando. Pontos restantes: " << numPontos << endl;
 
@@ -1816,7 +1825,7 @@ int main() {
                             jogo.draw(spriteChao);
                         }
                         // Desenha a folha, se ainda existir na célula
-                        if (mapaFolhas[i][j] && mapa[i][j] != '4') {
+                        if (mapaFolhas[i][j] && mapa[i][j] != '4' && mapa[i][j] != '5') {
                             spriteAsset.setTexture(Assets["folha"], true);
                             spriteAsset.setPosition(sf::Vector2f(j * SIZE, i * SIZE));
                             jogo.draw(spriteAsset);
@@ -1824,6 +1833,12 @@ int main() {
                         // Desenha a melancia
                         if (mapaFolhas[i][j] && mapa[i][j] == '4') {
                             spriteAsset.setTexture(Assets["melancia"], true);
+                            spriteAsset.setPosition(sf::Vector2f(j * SIZE, i * SIZE));
+                            jogo.draw(spriteAsset);
+                        }
+                        // Desenha o morango
+                        if (mapaFolhas[i][j] && mapa[i][j] == '5') {
+                            spriteAsset.setTexture(Assets["morango"], true);
                             spriteAsset.setPosition(sf::Vector2f(j * SIZE, i * SIZE));
                             jogo.draw(spriteAsset);
                         }
@@ -1892,13 +1907,13 @@ int main() {
                 lifepos.y += 50;
                 jogo.draw(life);
             }
-            if (melan[0]) {
+            if (morangos[0]) {
                 life.setTexture(Assets["blue-heart"], true);
                 life.setPosition(lifepos);
                 lifepos.y += 50;
                 jogo.draw(life); 
             }
-            if (melan[1]) {
+            if (morangos[1]) {
                 life.setTexture(Assets["blue-heart"], true);
                 life.setPosition(lifepos);
                 jogo.draw(life); 
