@@ -66,6 +66,9 @@ vector<sf::Texture> GameOver[4];       // Armazena os frames da animação de mo
 vector<sf::Texture> animacaoVitoria;   // Armazena os frames da animação de vitória
 int dificuldadeJogo = 3;               // Guarda a dificuldade dos fantasmas
 vector<bool> morangos = { 0, 0 };      // Representa as vidas extras, conseguidas com morangos
+bool melanciaAtiva = false;            // Indica se a melancia está enfraquecendo os fantasmas
+sf::Clock clockMelancia;               // Controla a duração do efeito da melancia
+const float DURACAO_MELANCIA = 8.0f;   // Tempo em segundos que os fantasmas ficam fracos
 
 // ===================================================================
 // STRUCTS
@@ -395,13 +398,14 @@ void Reset(Player& pacman, vector<Ghost>& ListaFantasmas, bool rstpts) {
     pacman.dir = pacman.esq = pacman.cima = pacman.baixo = false;
     pacman.wait = -1;
     stop = true; // Ativa a flag para pausar o jogo até a animação de transição terminar
+    melanciaAtiva = false;
 
     // Se rstpts (resetar pontos) for verdadeiro, começa novo jogo
     if (rstpts || pacman.dead) {
         numPontos = 0;
         // Preenche o mapa de folhas com base no layout original
         for (int i = 0; i < ALT; ++i) {
-            for (int j = 0; j < LAR - 1; ++j) {
+            for (int j = 0; j < LAR; ++j) {
                 mapaFolhas[i][j] = (mapa[i][j] == '0' || mapa[i][j] == '3' || mapa[i][j] == '4' || mapa[i][j] == '5');
                 if (mapaFolhas[i][j])
                     numPontos++;
@@ -713,6 +717,23 @@ int main() {
 
     menuMusic.setLooping(true); // Faz a música repetir
 
+    sf::Shader crocWeakShader;
+    bool crocWeakShaderLoaded = false;
+    if (sf::Shader::isAvailable()) {
+        crocWeakShaderLoaded = crocWeakShader.loadFromMemory(R"(
+            uniform sampler2D currentTexture;
+
+            void main()
+            {
+                vec4 pixel = texture2D(currentTexture, gl_TexCoord[0].xy) * gl_Color;
+                float luma = dot(pixel.rgb, vec3(0.299, 0.587, 0.114));
+                vec3 blue = mix(vec3(0.03, 0.20, 0.85), vec3(0.60, 0.92, 1.00), luma);
+                gl_FragColor = vec4(blue, pixel.a);
+            }
+        )", sf::Shader::Type::Fragment);
+        crocWeakShader.setUniform("currentTexture", sf::Shader::CurrentTexture);
+    }
+
     // Carrega as texturas do chão (caminho e rio) para o autotiling
     map<string, sf::Texture>& texturasChao = resources.floorTextures;
     sf::Sprite spriteChao(placeholderTexture);
@@ -777,7 +798,7 @@ int main() {
     // ============= ELEMENTOS MENU ==============
     // ===========================================
     // Título do Jogo
-    sf::Text titulo = criarTextoCentralizado(fonteMenu, "CAPIVARA MAN", 80, sf::Vector2f(WINDOW_WIDTH / 2.0f, 150));
+    sf::Text titulo = criarTextoCentralizado(fonteMenu, "CAPYBARA MAN", 80, sf::Vector2f(WINDOW_WIDTH / 2.0f, 150));
     titulo.setOutlineThickness(4);
     titulo.setStyle(sf::Text::Bold);
 
@@ -1390,9 +1411,8 @@ int main() {
                         Audios["point"].play();                      // Toca o som de coleta
                     else if (mapa[jogador.posy][jogador.posx] == '4') {
                         Audios["powerup"].play();
-                        for (auto& croc : ListaFantasmas) {
-                            croc.dificuldade = 0;
-                        }
+                        melanciaAtiva = true;
+                        clockMelancia.restart();
                         cout << "Melancia coletada. Fantasmas enfraquecidos!" << endl;
                     }
                     else {
@@ -1435,6 +1455,10 @@ int main() {
             // A IA precisa do mapa de distâncias atualizado a cada frame
             calcularDistancias(jogador, mapa, dist);
 
+            if (melanciaAtiva && clockMelancia.getElapsedTime().asSeconds() >= DURACAO_MELANCIA) {
+                melanciaAtiva = false;
+            }
+
             for (Ghost& croc : ListaFantasmas) {
                 // Só move o fantasma se ele já foi liberado e o jogo não está pausado
                 if (croc.release && !stop) {
@@ -1452,8 +1476,11 @@ int main() {
                     if (croc.Clock.getElapsedTime().asSeconds() > croc.delay) {
                         croc.Clock.restart();
 
-                        // A IA  decide o próximo movimento
+                        // A IA decide o próximo movimento. Com melancia ativa, o fantasma usa dificuldade 0 sem perder sua dificuldade original.
+                        int dificuldadeOriginal = croc.dificuldade;
+                        if (melanciaAtiva) croc.dificuldade = 0;
                         croc.dir = melhorDirecao(croc, dist, mapa, rng);
+                        croc.dificuldade = dificuldadeOriginal;
 
                         // Calcula a próxima posição
                         int nx = croc.x + dx[croc.dir];
@@ -1467,6 +1494,22 @@ int main() {
 
                         if (mesma_casa || trocaram_de_lugar)
                         {
+                            if (melanciaAtiva) {
+                                Audios["kill"].play();
+                                pontuacao += ppf * 4;
+
+                                croc.x = croc.xinicial;
+                                croc.y = croc.yinicial;
+                                croc.visualPos = sf::Vector2f(croc.x * SIZE, croc.y * SIZE);
+                                croc.dir = CIM;
+                                croc.release = false;
+                                croc.Clock.restart();
+                                croc.releaseClock.restart();
+
+                                cout << "Crocodilo comido pela melancia!" << endl;
+                                continue;
+                            }
+
                             // COLISÃO
                             currentState = GAME_OVER; // Muda o estado do jogo
                             Audios["life-lost"].play();
@@ -1869,8 +1912,12 @@ int main() {
                 else
                     croc.sprite.setTexture(croc.animNormal[croc.dir][croc.animFrame], true);
 
+                croc.sprite.setColor(sf::Color::White);
                 croc.sprite.setPosition(croc.visualPos);
-                jogo.draw(croc.sprite);
+                if (melanciaAtiva && crocWeakShaderLoaded)
+                    jogo.draw(croc.sprite, sf::RenderStates(&crocWeakShader));
+                else
+                    jogo.draw(croc.sprite);
             }
 
             // Se for GAME_OVER, desenha a animação de morte por cima
