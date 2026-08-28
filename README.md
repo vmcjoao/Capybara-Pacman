@@ -2,9 +2,15 @@
 
 A Pac-Man style game made with C++ and SFML, themed around capybaras and crocodiles.
 
-## Demo
+## Gallery
 
-<video src="assets/demo/demo.mp4" autoplay loop muted playsinline width="600"></video>
+<p align="center">
+  <img src="assets/demo/home-screen.png" width="48%" alt="Gameplay screen 1" />
+  <img src="assets/demo/in-game-screen.png" width="48%" alt="Gameplay screen 2" />
+  <br>
+  <img src="assets/demo/level-screen.png" width="48%" alt="Gameplay screen 3" />
+  <img src="assets/demo/victory-screen.png" width="48%" alt="Gameplay screen 4" />
+</p>
 
 ## Requirements
 
