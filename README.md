@@ -1,4 +1,4 @@
-# Capybara Pacman
+# Capybara Pacman (Introductory Programming Project)
 
 A Pac-Man style game made with C++ and SFML, themed around capybaras, crocodiles, leaves, water, and powerups.
 
