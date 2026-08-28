@@ -12,6 +12,9 @@ a.out
 *.exe
 *.out
 
+# Runtime player data
+highscore.txt
+
 # Editor and OS files
 .vscode/
 .idea/

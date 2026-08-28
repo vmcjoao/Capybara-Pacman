@@ -4,6 +4,7 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -41,6 +42,7 @@ enum GameState {     // Controla a máquina de estados do jogo, determinando o q
     PAUSADO,
     CONFIGURACOES,
     GAME_OVER,
+    COMENDO_CROC,
     TELA_FIM_DE_JOGO,
     VITORIA
 };
@@ -48,6 +50,11 @@ const float delayNormal = 0.25f;       // Tempo (em segundos) que o jogador leva
 const float delayLento = 0.35f;        // Tempo que o jogador leva para se mover uma célula na água (penalidade)
 const float FRAME_DELAY = 0.07f;       // Duração de cada frame na animação da tela de loading
 const float LOADING_DURATION = FRAME_DELAY * 22; // Duração total da tela de loading, calculada a partir dos frames
+const float WATERMELON_RUSH_DURATION = 8.f;
+const float CAP_EAT_CROC_FRAME_DELAY = 0.025f;
+const int CAP_EAT_CROC_FRAME_COUNT = 8;
+const int CROCODILE_BONUS = 500;
+const string HIGHSCORE_FILE = "highscore.txt";
 float delayAnim = 0.2f;                // Velocidade da interpolação visual (movimento suave entre células)
 int pontuacao;                         // Armazena a pontuação da partida atual
 int numPontos = 0;                     // Contador total de folhas no mapa, usado para checar a condição de vitória
@@ -63,12 +70,10 @@ sf::Text scoreText{font};              // Texto da SFML para exibir a pontuaçã
 sf::Texture placeholderTexture;        // Textura vazia para construir sprites antes do carregamento real
 vector<sf::Texture> Loading;           // Armazena os frames da animação de loading
 vector<sf::Texture> GameOver[4];       // Armazena os frames da animação de morte, um set para cada direção
+vector<sf::Texture> CapEatCroc[4];     // Armazena os frames da capivara comendo crocodilo
 vector<sf::Texture> animacaoVitoria;   // Armazena os frames da animação de vitória
 int dificuldadeJogo = 3;               // Guarda a dificuldade dos fantasmas
 vector<bool> morangos = { 0, 0 };      // Representa as vidas extras, conseguidas com morangos
-bool melanciaAtiva = false;            // Indica se a melancia está enfraquecendo os fantasmas
-sf::Clock clockMelancia;               // Controla a duração do efeito da melancia
-const float DURACAO_MELANCIA = 8.0f;   // Tempo em segundos que os fantasmas ficam fracos
 
 // ===================================================================
 // STRUCTS
@@ -109,6 +114,8 @@ struct Ghost {
     sf::Sprite sprite{placeholderTexture}; // Sprite do fantasma
     vector<sf::Texture> animNormal[4]; // Vetores de texturas para animação em terra (um para cada direção)
     vector<sf::Texture> animSwim[4];   // Vetores de texturas para animação na água
+    vector<sf::Texture> animWeak[4];   // Vetores de texturas para o modo melancia em terra
+    vector<sf::Texture> animWeakSwim[4]; // Vetores de texturas para o modo melancia na água
     int animFrame = 0;              // Índice do frame atual da animação
 
     // --- Controle de Velocidade ---
@@ -209,6 +216,30 @@ void AnimacaoFantasmaSwim(Ghost& g, int dir, const string& prefixo, const string
         g.animSwim[dir].push_back(tex);
     }
 }
+// Carrega a sequência de frames de um fantasma vulnerável
+void AnimacaoFantasmaWeak(Ghost& g, int dir, const string& prefixo, int frameCount) {
+    for (int i = 0; i < frameCount; ++i) {
+        sf::Texture tex;
+        string nomeArquivo = "assets/croc-weak-" + prefixo + "-" + to_string(i) + ".png";
+        if (!tex.loadFromFile(nomeArquivo))
+            cout << "Erro lendo " << nomeArquivo << "\n";
+        else
+            cout << "Sprite " << nomeArquivo << " carregado com sucesso" << endl;
+        g.animWeak[dir].push_back(tex);
+    }
+}
+// Carrega a sequência de frames de um fantasma vulnerável nadando
+void AnimacaoFantasmaWeakSwim(Ghost& g, int dir, const string& prefixo, int frameCount) {
+    for (int i = 0; i < frameCount; ++i) {
+        sf::Texture tex;
+        string nomeArquivo = "assets/croc-weak-swim-" + prefixo + "-" + to_string(i) + ".png";
+        if (!tex.loadFromFile(nomeArquivo))
+            cout << "Erro lendo " << nomeArquivo << "\n";
+        else
+            cout << "Sprite " << nomeArquivo << " carregado com sucesso" << endl;
+        g.animWeakSwim[dir].push_back(tex);
+    }
+}
 // Carrega a animação de "game over" (fantasma comendo o jogador)
 void AnimacaoGameOver(int dir, const string& prefixo, int frameCount) {
     for (int i = 0; i < frameCount; ++i) {
@@ -219,6 +250,18 @@ void AnimacaoGameOver(int dir, const string& prefixo, int frameCount) {
         else
             cout << "Sprite " << nomeArquivo << " carregado com sucesso" << endl;
         GameOver[dir].push_back(tex);
+    }
+}
+// Carrega a animação de "capivara comendo crocodilo"
+void AnimacaoCapEatCroc(int dir, const string& prefixo, int frameCount) {
+    for (int i = 0; i < frameCount; ++i) {
+        sf::Texture tex;
+        string nomeArquivo = "assets/cap-eat-croc-" + prefixo + "-" + to_string(i) + ".png";
+        if (!tex.loadFromFile(nomeArquivo))
+            cout << "Erro lendo imagem " << nomeArquivo << "\n";
+        else
+            cout << "Sprite " << nomeArquivo << " carregado com sucesso" << endl;
+        CapEatCroc[dir].push_back(tex);
     }
 }
 // Carrega os frames da tela de loading
@@ -389,6 +432,57 @@ sf::Vector2u calcularTamanhoInicialJanela() {
     );
 }
 
+int carregarRecorde() {
+    ifstream arquivo(HIGHSCORE_FILE);
+    int recorde = 0;
+    if (arquivo >> recorde) {
+        return recorde;
+    }
+    return 0;
+}
+
+void salvarRecorde(int recorde) {
+    ofstream arquivo(HIGHSCORE_FILE);
+    if (arquivo) {
+        arquivo << recorde << '\n';
+    }
+}
+
+void atualizarRecorde(int pontuacaoAtual, int& recorde) {
+    if (pontuacaoAtual > recorde) {
+        recorde = pontuacaoAtual;
+        salvarRecorde(recorde);
+    }
+}
+
+int indiceMapa(float coordenada, int limite) {
+    int indice = static_cast<int>(coordenada + SIZE / 2) / SIZE;
+    if (indice < 0) return limite - 1;
+    if (indice >= limite) return 0;
+    return indice;
+}
+
+bool estaNaAgua(sf::Vector2f visualPos) {
+    return mapa[indiceMapa(visualPos.y, ALT)][indiceMapa(visualPos.x, LAR)] == '2';
+}
+
+void mandarFantasmaParaBase(Ghost& croc) {
+    croc.x = croc.xinicial;
+    croc.y = croc.yinicial;
+    croc.visualPos = sf::Vector2f(croc.x * SIZE, croc.y * SIZE);
+    croc.dir = CIM;
+    croc.release = false;
+    croc.releaseClock.restart();
+}
+
+sf::Vector2f offsetCapivaraNaAnimacaoCroc(int dir) {
+    if (dir == DIR) return sf::Vector2f(18.f, 6.f);
+    if (dir == ESQ) return sf::Vector2f(60.f, 6.f);
+    if (dir == CIM) return sf::Vector2f(39.f, 10.f);
+    if (dir == BAI) return sf::Vector2f(39.f, 2.f);
+    return sf::Vector2f(0.f, 0.f);
+}
+
 // --- Funções de Lógica do Jogo ---
 // Reseta o estado do jogo, para uma nova partida ou após perder uma vida
 void Reset(Player& pacman, vector<Ghost>& ListaFantasmas, bool rstpts) {
@@ -398,7 +492,6 @@ void Reset(Player& pacman, vector<Ghost>& ListaFantasmas, bool rstpts) {
     pacman.dir = pacman.esq = pacman.cima = pacman.baixo = false;
     pacman.wait = -1;
     stop = true; // Ativa a flag para pausar o jogo até a animação de transição terminar
-    melanciaAtiva = false;
 
     // Se rstpts (resetar pontos) for verdadeiro, começa novo jogo
     if (rstpts || pacman.dead) {
@@ -598,6 +691,9 @@ int main() {
     GameState prevState;
     float volumeGeral = 100;
     GameResources resources;
+    int recorde = carregarRecorde();
+    bool watermelonRush = false;
+    sf::Clock watermelonRushClock;
 
     // --- Configuração da Janela ---
     sf::RenderWindow jogo(sf::VideoMode(calcularTamanhoInicialJanela()), "Pac-Man");
@@ -656,9 +752,12 @@ int main() {
         Animacaopacman(i, as4direcoes[i], 4);
         Animacaoswimpacman(i, as4direcoes[i], 4);
         AnimacaoGameOver(i, as4direcoes[i], 10);
+        AnimacaoCapEatCroc(i, as4direcoes[i], CAP_EAT_CROC_FRAME_COUNT);
         for (Ghost& croc : ListaFantasmas) {
             AnimacaoFantasma(croc, i, as4direcoes[i], "croc", 4);
             AnimacaoFantasmaSwim(croc, i, as4direcoes[i], "croc", 4);
+            AnimacaoFantasmaWeak(croc, i, as4direcoes[i], 4);
+            AnimacaoFantasmaWeakSwim(croc, i, as4direcoes[i], 4);
         }
     }
 
@@ -668,6 +767,11 @@ int main() {
     sf::Vector2f posAnimGameOver;
     int frameAnimGameOver;
     sf::Clock clockAnimGameOver;
+    Ghost* crocComido = nullptr;
+    int dirAnimEatCroc;
+    sf::Vector2f posAnimEatCroc;
+    int frameAnimEatCroc = 0;
+    sf::Clock clockAnimEatCroc;
 
     // Carrega a animação da tela de loading
     carregarLoading();
@@ -716,23 +820,6 @@ int main() {
     }
 
     menuMusic.setLooping(true); // Faz a música repetir
-
-    sf::Shader crocWeakShader;
-    bool crocWeakShaderLoaded = false;
-    if (sf::Shader::isAvailable()) {
-        crocWeakShaderLoaded = crocWeakShader.loadFromMemory(R"(
-            uniform sampler2D currentTexture;
-
-            void main()
-            {
-                vec4 pixel = texture2D(currentTexture, gl_TexCoord[0].xy) * gl_Color;
-                float luma = dot(pixel.rgb, vec3(0.299, 0.587, 0.114));
-                vec3 blue = mix(vec3(0.03, 0.20, 0.85), vec3(0.60, 0.92, 1.00), luma);
-                gl_FragColor = vec4(blue, pixel.a);
-            }
-        )", sf::Shader::Type::Fragment);
-        crocWeakShader.setUniform("currentTexture", sf::Shader::CurrentTexture);
-    }
 
     // Carrega as texturas do chão (caminho e rio) para o autotiling
     map<string, sf::Texture>& texturasChao = resources.floorTextures;
@@ -922,6 +1009,17 @@ int main() {
     valorVolumeText.setOutlineThickness(2);
     valorVolumeText.setPosition(sf::Vector2f(volumeTrack.getPosition().x + volumeTrack.getSize().x / 2.f + 30, volumeTrack.getPosition().y - 15));
 
+    sf::Text recordeText(font, "", 24);
+    recordeText.setFillColor(sf::Color::Black);
+    recordeText.setPosition(sf::Vector2f(20, MAP_HEIGHT + 12));
+
+    sf::Text estadoPowerupText(font, "", 24);
+    estadoPowerupText.setFillColor(sf::Color(0x0d5c63FF));
+    estadoPowerupText.setPosition(sf::Vector2f(MAP_WIDTH / 2.f - 140, MAP_HEIGHT + 12));
+
+    sf::Text placarFinalText = criarTextoCentralizado(fonteMenu, "", 38, sf::Vector2f(WINDOW_WIDTH / 2.0f, 305));
+    placarFinalText.setOutlineThickness(2);
+
     // Controle do arraste
     bool isDraggingVolume = false;
 
@@ -1079,6 +1177,7 @@ int main() {
                             cout << "Dificuldade selecionada: " << hoveredLevel << endl;
 
                             pontuacao = 0;
+                            watermelonRush = false;
                             currentState = INICIANDO;
                             Audios["button-click"].play();
                             transitionClock.restart();
@@ -1100,6 +1199,8 @@ int main() {
                         dificuldadeJogo = hoveredLevel;
                         cout << "Dificuldade selecionada: " << hoveredLevel << endl;
 
+                        pontuacao = 0;
+                        watermelonRush = false;
                         currentState = INICIANDO;
                         Audios["button-click"].play();
                         transitionClock.restart();
@@ -1312,7 +1413,9 @@ int main() {
             if (tempoDecorrido >= LOADING_DURATION) {
                 Reset(jogador, ListaFantasmas, 1); // Reseta tudo para uma nova partida
                 deltaClock.restart();
+                watermelonRush = false;
                 for (auto& croc : ListaFantasmas) {
+                    croc.isWeak = false;
                     croc.releaseClock.restart(); // Zera os timers de liberação dos fantasmas
                 }
                 // Sincroniza a posição visual com a lógica.
@@ -1329,6 +1432,14 @@ int main() {
         // Lógica Principal do Jogo
         case JOGANDO: {
             // --- Atualização do Estado do Jogo ---
+            if (watermelonRush && watermelonRushClock.getElapsedTime().asSeconds() >= WATERMELON_RUSH_DURATION) {
+                watermelonRush = false;
+                for (auto& croc : ListaFantasmas) {
+                    croc.isWeak = false;
+                    croc.sprite.setColor(sf::Color::White);
+                }
+                cout << "Powerup terminou." << endl;
+            }
 
             // Ajusta a velocidade do jogador com base no terreno
             if (mapa[jogador.posy][jogador.posx] == '2') { // Se está na água
@@ -1411,8 +1522,11 @@ int main() {
                         Audios["point"].play();                      // Toca o som de coleta
                     else if (mapa[jogador.posy][jogador.posx] == '4') {
                         Audios["powerup"].play();
-                        melanciaAtiva = true;
-                        clockMelancia.restart();
+                        watermelonRush = true;
+                        watermelonRushClock.restart();
+                        for (auto& croc : ListaFantasmas) {
+                            croc.isWeak = true;
+                        }
                         cout << "Melancia coletada. Fantasmas enfraquecidos!" << endl;
                     }
                     else {
@@ -1429,6 +1543,7 @@ int main() {
 
                     if (numPontos == 0) {
                         cout << "VITORIA! Todos os pontos foram coletados." << endl;
+                        atualizarRecorde(pontuacao, recorde);
                         Audios["win"].play(); // Toca o som de vitória
                         currentState = VITORIA;
                         mousep = 0;
@@ -1455,10 +1570,6 @@ int main() {
             // A IA precisa do mapa de distâncias atualizado a cada frame
             calcularDistancias(jogador, mapa, dist);
 
-            if (melanciaAtiva && clockMelancia.getElapsedTime().asSeconds() >= DURACAO_MELANCIA) {
-                melanciaAtiva = false;
-            }
-
             for (Ghost& croc : ListaFantasmas) {
                 // Só move o fantasma se ele já foi liberado e o jogo não está pausado
                 if (croc.release && !stop) {
@@ -1471,16 +1582,17 @@ int main() {
                         croc.delay = croc.delayNormal;
                         croc.delayAnim = SIZE / croc.delay;
                     }
+                    if (watermelonRush) {
+                        croc.delay *= 1.8f;
+                        croc.delayAnim = SIZE / croc.delay;
+                    }
 
                     // Movimentação do Fantasma, também controlada por tempo
                     if (croc.Clock.getElapsedTime().asSeconds() > croc.delay) {
                         croc.Clock.restart();
 
-                        // A IA decide o próximo movimento. Com melancia ativa, o fantasma usa dificuldade 0 sem perder sua dificuldade original.
-                        int dificuldadeOriginal = croc.dificuldade;
-                        if (melanciaAtiva) croc.dificuldade = 0;
+                        // A IA  decide o próximo movimento
                         croc.dir = melhorDirecao(croc, dist, mapa, rng);
-                        croc.dificuldade = dificuldadeOriginal;
 
                         // Calcula a próxima posição
                         int nx = croc.x + dx[croc.dir];
@@ -1494,24 +1606,27 @@ int main() {
 
                         if (mesma_casa || trocaram_de_lugar)
                         {
-                            if (melanciaAtiva) {
+                            if (watermelonRush) {
+                                pontuacao += CROCODILE_BONUS;
+                                atualizarRecorde(pontuacao, recorde);
                                 Audios["kill"].play();
-                                pontuacao += ppf * 4;
-
-                                croc.x = croc.xinicial;
-                                croc.y = croc.yinicial;
-                                croc.visualPos = sf::Vector2f(croc.x * SIZE, croc.y * SIZE);
-                                croc.dir = CIM;
-                                croc.release = false;
-                                croc.Clock.restart();
-                                croc.releaseClock.restart();
-
-                                cout << "Crocodilo comido pela melancia!" << endl;
-                                continue;
+                                currentState = COMENDO_CROC;
+                                crocComido = &croc;
+                                dirAnimEatCroc = jogador.ultimadir;
+                                posAnimEatCroc = jogador.visualPos - offsetCapivaraNaAnimacaoCroc(dirAnimEatCroc);
+                                frameAnimEatCroc = 0;
+                                clockAnimEatCroc.restart();
+                                cout << "Crocodilo mandado para a base. Bonus: " << CROCODILE_BONUS << endl;
+                                break;
                             }
 
                             // COLISÃO
                             currentState = GAME_OVER; // Muda o estado do jogo
+                            watermelonRush = false;
+                            for (auto& outroCroc : ListaFantasmas) {
+                                outroCroc.isWeak = false;
+                                outroCroc.sprite.setColor(sf::Color::White);
+                            }
                             Audios["life-lost"].play();
 
                             // Prepara as variáveis para a animação de "comer" o jogador
@@ -1657,10 +1772,27 @@ int main() {
                 }
                 else { // Se não tem mais vidas
                     cout << "Fim de Jogo!" << endl;
+                    atualizarRecorde(pontuacao, recorde);
                     currentState = TELA_FIM_DE_JOGO;
                     Audios["game-over"].play();
                     mousep = 0;
                 }
+            }
+            break;
+        }
+        case COMENDO_CROC: {
+            if (clockAnimEatCroc.getElapsedTime().asSeconds() > CAP_EAT_CROC_FRAME_DELAY) {
+                frameAnimEatCroc++;
+                clockAnimEatCroc.restart();
+            }
+
+            if (frameAnimEatCroc >= CAP_EAT_CROC_FRAME_COUNT) {
+                if (crocComido) {
+                    mandarFantasmaParaBase(*crocComido);
+                    crocComido->isWeak = watermelonRush;
+                    crocComido = nullptr;
+                }
+                currentState = JOGANDO;
             }
             break;
         }
@@ -1762,9 +1894,9 @@ int main() {
         // --- Lógica de troca de frames dos Sprites ---
         bool isMoving = jogador.dir || jogador.esq || jogador.cima || jogador.baixo;
         // Verifica se o centro do sprite do jogador está sobre uma célula de água
-        bool pacNaAgua = mapa[(int)(jogador.visualPos.y + SIZE / 2) / SIZE][(int)(jogador.visualPos.x + SIZE / 2) / SIZE] == '2';
+        bool pacNaAgua = estaNaAgua(jogador.visualPos);
 
-        if ((isMoving || pacNaAgua) && !stop) {
+        if ((isMoving || pacNaAgua) && !stop && currentState != COMENDO_CROC) {
             if (animationClock.getElapsedTime().asSeconds() > ANIMATION_SPEED) {
                 // Escolhe o conjunto de texturas (terra ou água) e avança o frame
                 const auto& texPac = pacNaAgua ? Texturasswim[jogador.ultimadir] : Texturas[jogador.ultimadir];
@@ -1785,12 +1917,32 @@ int main() {
         // Animação dos sprites dos Fantasmas (ocorre para todos simultaneamente)
         if (animationClock.getElapsedTime().asSeconds() > ANIMATION_SPEED) {
             for (Ghost& croc : ListaFantasmas) {
-                bool crocNaAgua = mapa[(int)(croc.visualPos.y + SIZE / 2) / SIZE][(int)(croc.visualPos.x + SIZE / 2) / SIZE] == '2';
-                const auto& texCroc = crocNaAgua ? croc.animSwim[croc.dir] : croc.animNormal[croc.dir];
+                bool crocNaAgua = estaNaAgua(croc.visualPos);
+                const auto& texCroc = croc.isWeak
+                    ? (crocNaAgua ? croc.animWeakSwim[croc.dir] : croc.animWeak[croc.dir])
+                    : (crocNaAgua ? croc.animSwim[croc.dir] : croc.animNormal[croc.dir]);
                 croc.animFrame = (croc.animFrame + 1) % texCroc.size();
             }
             animationClock.restart(); // Reinicia o relógio global de animação
         }
+
+        atualizarRecorde(pontuacao, recorde);
+        scoreText.setFont(font);
+        scoreText.setString("Pontos: " + to_string(pontuacao));
+        scoreText.setCharacterSize(32);
+        scoreText.setFillColor(sf::Color::Black);
+        recordeText.setString("Recorde: " + to_string(recorde));
+
+        if (watermelonRush) {
+            int segundosRestantes = static_cast<int>(ceil(WATERMELON_RUSH_DURATION - watermelonRushClock.getElapsedTime().asSeconds()));
+            estadoPowerupText.setString("MELANCIA: " + to_string(max(0, segundosRestantes)) + "s");
+        }
+        else {
+            estadoPowerupText.setString("");
+        }
+
+        placarFinalText.setString("Pontos: " + to_string(pontuacao) + "   Recorde: " + to_string(recorde));
+        centralizarOrigem(placarFinalText);
 
 
         // --- Renderização (Desenho na Tela) ---
@@ -1827,6 +1979,7 @@ int main() {
         case PAUSADO:
         case TELA_FIM_DE_JOGO:
         case VITORIA:
+        case COMENDO_CROC:
         case GAME_OVER: { // A renderização para JOGANDO e GAME_OVER é muito similar
             // 1. Limpa a tela com a cor de fundo do gramado
             jogo.clear(sf::Color(0x89ac45FF));
@@ -1890,7 +2043,7 @@ int main() {
             }
 
             // 3. Desenha os personagens
-            if (currentState != GAME_OVER) {
+            if (currentState != GAME_OVER && currentState != COMENDO_CROC) {
                 // Atualiza a textura do jogador (terra ou água)
                 if (pacNaAgua)
                     jogador.Sprite.setTexture(Texturasswim[jogador.ultimadir][jogador.animationFrame], true);
@@ -1905,19 +2058,17 @@ int main() {
             for (Ghost& croc : ListaFantasmas) {
                 // No estado GAME_OVER, não desenha o fantasma que está na animação de colisão
                 if (currentState == GAME_OVER && &croc == crocColidido) continue;
+                if (currentState == COMENDO_CROC && &croc == crocComido) continue;
 
-                bool crocNaAgua = mapa[(int)(croc.visualPos.y + SIZE / 2) / SIZE][(int)(croc.visualPos.x + SIZE / 2) / SIZE] == '2';
-                if (crocNaAgua)
-                    croc.sprite.setTexture(croc.animSwim[croc.dir][croc.animFrame], true);
-                else
-                    croc.sprite.setTexture(croc.animNormal[croc.dir][croc.animFrame], true);
+                bool crocNaAgua = estaNaAgua(croc.visualPos);
+                const auto& texCroc = croc.isWeak
+                    ? (crocNaAgua ? croc.animWeakSwim[croc.dir] : croc.animWeak[croc.dir])
+                    : (crocNaAgua ? croc.animSwim[croc.dir] : croc.animNormal[croc.dir]);
+                croc.sprite.setTexture(texCroc[croc.animFrame], true);
 
                 croc.sprite.setColor(sf::Color::White);
                 croc.sprite.setPosition(croc.visualPos);
-                if (melanciaAtiva && crocWeakShaderLoaded)
-                    jogo.draw(croc.sprite, sf::RenderStates(&crocWeakShader));
-                else
-                    jogo.draw(croc.sprite);
+                jogo.draw(croc.sprite);
             }
 
             // Se for GAME_OVER, desenha a animação de morte por cima
@@ -1925,6 +2076,13 @@ int main() {
                 sf::Sprite spriteAnimacao(placeholderTexture);
                 spriteAnimacao.setTexture(GameOver[dirAnimGameOver][frameAnimGameOver], true);
                 spriteAnimacao.setPosition(posAnimGameOver);
+                jogo.draw(spriteAnimacao);
+            }
+            if (currentState == COMENDO_CROC) {
+                sf::Sprite spriteAnimacao(placeholderTexture);
+                int frameSeguro = min(frameAnimEatCroc, CAP_EAT_CROC_FRAME_COUNT - 1);
+                spriteAnimacao.setTexture(CapEatCroc[dirAnimEatCroc][frameSeguro], true);
+                spriteAnimacao.setPosition(posAnimEatCroc);
                 jogo.draw(spriteAnimacao);
             }
 
@@ -1940,6 +2098,10 @@ int main() {
 
             scoreText.setPosition(sf::Vector2f(MAP_WIDTH - 390, MAP_HEIGHT + 10));
             jogo.draw(scoreText);
+            jogo.draw(recordeText);
+            if (watermelonRush) {
+                jogo.draw(estadoPowerupText);
+            }
 
             sf::Sprite life(placeholderTexture);
             sf::Vector2f lifepos(MAP_WIDTH + 5, 30);
@@ -1997,6 +2159,7 @@ int main() {
 
                 // Desenha os textos e botões da tela de Fim de Jogo
                 jogo.draw(textoFimDeJogo);
+                jogo.draw(placarFinalText);
                 jogo.draw(botaoJogarNovamente);
                 jogo.draw(botaoVoltarMenu);
                 if (showpointer)
@@ -2009,6 +2172,7 @@ int main() {
                 jogo.draw(vitoriaSprite);
 
                 jogo.draw(textoVitoria);
+                jogo.draw(placarFinalText);
                 jogo.draw(botaoJogarNovamente);
                 jogo.draw(botaoVoltarMenu);
                 if (showpointer)
