@@ -4,7 +4,7 @@ A Pac-Man style game made with C++ and SFML, themed around capybaras and crocodi
 
 ## Demo
 
-![Capybara Pacman Gameplay](assets/demo.gif)
+<video src="assets/demo/demo.mp4" autoplay loop muted playsinline width="600"></video>
 
 ## Requirements
 
